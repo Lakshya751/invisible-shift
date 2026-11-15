@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root { color-scheme: light; }
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  body { @apply bg-canvas text-ink font-sans; font-feature-settings: "cv11", "ss01"; overflow-x: hidden; }
+  ::selection { background: rgba(45, 212, 191, 0.3); }
+  /* grid items must be allowed to shrink so wide charts/matrices scroll inside their card */
+  .grid > * { min-width: 0; }
+}
+
+.grain {
+  background-image: radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+@media print {
+  @page { size: letter; margin: 14mm; }
+  .no-print { display: none !important; }
+  body { background: white !important; }
+  main { padding: 0 !important; max-width: none !important; }
+  .lg\:pl-\[260px\] { padding-left: 0 !important; }
+  .print-card { box-shadow: none !important; border-color: #e2e8f0 !important; break-inside: avoid; }
+  .print-break { break-before: page; }
+}

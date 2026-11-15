@@ -5,7 +5,7 @@ Expected result through real constraint matching: 28 tasks, 21 covered,
 """
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from .models import (
     AvailabilityBlock,
@@ -189,10 +189,10 @@ def demo_workspace() -> Workspace:
     )
 
 
-def blank_workspace() -> Workspace:
+def blank_workspace(patient: Optional[Patient] = None, start_date: str = DEMO_START) -> Workspace:
     return Workspace(
-        patient=Patient(name="Your patient", synthetic=False, situation=""),
-        plan=CarePlan(start_date=DEMO_START, days=7, source="none", extraction_mode="none", templates=[]),
+        patient=patient or Patient(name="New patient", synthetic=False, situation=""),
+        plan=CarePlan(start_date=start_date, days=7, source="none", extraction_mode="none", templates=[]),
         tasks=[],
         caregivers=[],
         is_demo=False,

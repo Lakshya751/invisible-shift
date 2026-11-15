@@ -18,6 +18,7 @@ The question nobody asks is: **"Who is actually available to do every required c
 
 | Feature | What it does |
 |---|---|
+| **Accounts & patients** | Sign in or create an account (passwords hashed with PBKDF2, sessions in an HttpOnly cookie). Each account can add, edit, switch between and delete patients, and each patient has its own discharge plan, care team, schedule and report. **Launch Live Demo** needs no account: it opens a temporary guest session with the fictional demo patient, and a guest can create an account later without losing their patients. |
 | **AI Discharge Plan Reader** | Upload a PDF (or paste text). Tasks are extracted with the original wording kept, classified into 9 categories, and labeled *family / self-managed / professional-only / unclear*. Details the document doesn't state stay blank and are flagged for review. The family must confirm **every** task before anything is scheduled. |
 | **Care Team** | Caregiver profiles with a drag-to-paint weekly calendar (available / possibly available / unavailable), exact-time form, approved task types, physical-assist and transport abilities, commitments, weekly hour limits, and whether they've agreed to help. |
 | **Deterministic scheduling engine** | Real constraint matching (no LLM involved). Every assignment and every gap comes with a plain-language explanation and a per-caregiver breakdown. |
@@ -33,18 +34,20 @@ The question nobody asks is: **"Who is actually available to do every required c
 
 - **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui-style components (Radix + CVA), Lucide icons, Recharts, Framer Motion
 - **Backend:** Python 3.9+, FastAPI, Pydantic v2, SQLAlchemy + SQLite, PyMuPDF
-- **AI (optional):** OpenAI (`gpt-4o-mini` by default) or Gemini (`gemini-2.0-flash`) over REST with JSON mode
+- **AI (optional):** OpenAI (`gpt-4o-mini` by default) or Gemini (`gemini-3.5-flash`) over REST with JSON mode
 
 ## Architecture
 
 ```
 ┌─────────────────────────── React SPA (Vite) ───────────────────────────┐
-│ Landing · Overview · Discharge · Team · Schedule · Gaps · Simulator ·   │
-│ Report · Care Navigator · Guided tour      (shared AppState context)    │
+│ Landing · Sign in · Patients · Overview · Discharge · Team · Schedule · │
+│ Gaps · Simulator · Report · Care Navigator · Guided tour (AppState)     │
 └───────────────────────────────┬─────────────────────────────────────────┘
                                 │ /api (JSON)
 ┌───────────────────────────────▼─────────────────────────────────────────┐
-│ FastAPI (app/main.py)                                                   │
+│ FastAPI (app/main.py) — every patient endpoint is scoped to the        │
+│ signed-in user's selected patient                                       │
+│  ├─ auth.py         PBKDF2 password hashing · session context           │
 │  ├─ extraction.py   PDF → text (PyMuPDF) · rule-based extractor ·       │
 │  │                  synthetic sample PDF                                │
 │  ├─ ai.py           provider layer · extraction prompt · JSON parse +   │
@@ -55,7 +58,8 @@ The question nobody asks is: **"Who is actually available to do every required c
 │  ├─ gaps.py         Care Gap Detection Engine                           │
 │  ├─ services.py     scenario simulation diff · report builder           │
 │  ├─ assistant.py    Care Navigator (deterministic facts → optional LLM) │
-│  ├─ db.py           SQLite via SQLAlchemy (validated JSON workspace)    │
+│  ├─ db.py           SQLite: users · sessions (hashed tokens) ·          │
+│  │                  one validated JSON workspace per patient            │
 │  └─ demo.py         fictional Wilson family fixture                     │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -108,11 +112,11 @@ npm run dev
 ### Tests
 
 ```bash
-cd backend && .venv/bin/python -m pytest -q      # 42 tests
+cd backend && .venv/bin/python -m pytest -q      # 52 tests
 cd frontend && npm run typecheck
 ```
 
-The tests cover: creating exactly 28 weekly tasks, 21 covered / 7 uncovered / 75 % for the fixture (and *which* tasks), availability matching, the full-duration window, overlap prevention (and that the same time on different days is fine), commitments, capability / physical-assist / transport constraints, weekly hour limits, professional-only and unclear tasks, self-managed tasks left out of the coverage denominator, unconfirmed and "possibly available" caregivers counted as tentative, workload balancing, flexible-time placement, never moving time-sensitive tasks, coverage math, a scenario that leaves the original schedule untouched, the **Maya Wednesday scenario → 22 covered / 6 uncovered / 78.6 %**, apply persistence, removing a caregiver, manual-assignment conflicts, the report contents, Care Navigator answers, malformed AI output, AI retries, grounding checks, falling back when the AI is unavailable, and invalid uploads (wrong type, not a PDF, empty, corrupt).
+The tests cover: password hashing, sign-up/sign-in/sign-out, input validation, adding/switching/editing/deleting patients, users being unable to see each other's patients, guest-to-account upgrade, creating exactly 28 weekly tasks, 21 covered / 7 uncovered / 75 % for the fixture (and *which* tasks), availability matching, the full-duration window, overlap prevention (and that the same time on different days is fine), commitments, capability / physical-assist / transport constraints, weekly hour limits, professional-only and unclear tasks, self-managed tasks left out of the coverage denominator, unconfirmed and "possibly available" caregivers counted as tentative, workload balancing, flexible-time placement, never moving time-sensitive tasks, coverage math, a scenario that leaves the original schedule untouched, the **Maya Wednesday scenario → 22 covered / 6 uncovered / 78.6 %**, apply persistence, removing a caregiver, manual-assignment conflicts, the report contents, Care Navigator answers, malformed AI output, AI retries, grounding checks, falling back when the AI is unavailable, and invalid uploads (wrong type, not a PDF, empty, corrupt).
 
 ## AI configuration
 
@@ -136,7 +140,8 @@ The header badge always shows which mode is active, and each Navigator reply is 
 
 ## Demo instructions (≈ 2 minutes)
 
-1. Open the app and click **Launch Live Demo**. This loads the fictional patient Robert Wilson (72) with caregivers Maya, Daniel and Sarah.
+1. Open the app and click **Launch Live Demo** (no account needed). This loads the fictional patient Robert Wilson (72) with caregivers Maya, Daniel and Sarah.
+   To try accounts instead: **Sign in → Create account**, then **Add patient** (or **Add demo patient**) on the Patients page.
 2. **Overview:** 28 tasks, **21 covered, 7 uncovered, 75 %**.
 3. **Coverage Gaps:** five weekday lunches and the Wednesday/Friday 8 PM dressing observations. Expand "Why each caregiver couldn't help".
 4. **Care Schedule:** click the red Wednesday 8 PM block to see each caregiver's evaluation and the original instruction. Try assigning Daniel and watch the exact conflict appear.
@@ -157,12 +162,12 @@ To try upload: on **Discharge Plan**, click *Download sample PDF*, then upload i
 - **Human in the loop.** The family must confirm every extracted task. Missing times, frequencies and durations are flagged, never made up.
 - **Consent.** Caregivers who haven't agreed to help only ever provide *tentative* coverage.
 - **Urgency means scheduling urgency** (how soon the gap occurs), not clinical risk.
-- **Prototype.** Not certified and **not HIPAA-compliant**. Single local workspace, no authentication. Use fictional or de-identified data only. API keys stay on the server, and no patient data is logged.
+- **Prototype.** Not certified and **not HIPAA-compliant**. Accounts are basic: no email verification, password reset, rate limiting or multi-factor sign-in, and temporary guest accounts are never cleaned up. Set `COOKIE_SECURE=true` when serving over HTTPS. Use fictional or de-identified data only. API keys stay on the server, and no patient data is logged.
 - The rule-based extractor is a keyword heuristic. Scanned (image-only) PDFs need OCR, which isn't included, so paste the text instead.
 
 ## Future improvements
 
-- Multi-family accounts, authentication and per-caregiver invitations (SMS/email accept or decline)
+- Password reset, email verification, rate limiting, shared access to a patient across family members, and per-caregiver invitations (SMS/email accept or decline)
 - Recurring plans longer than one week; calendar sync (Google/iCal) to import commitments
 - Optimal assignment (ILP / max-flow) as an option alongside the explainable greedy scheduler
 - OCR for scanned discharge documents; multilingual extraction and explanations

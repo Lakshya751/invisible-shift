@@ -211,3 +211,15 @@ def test_unavailable_ai_falls_back_to_rules(client, monkeypatch):
     assert body["tasks"][0]["category"] == "meals"
     chat = client.post("/api/assistant/chat", json={"message": "Why are tasks uncovered?"}).json()
     assert chat["mode"] == "deterministic"
+
+
+def test_ai_output_with_nulls_and_ampm_is_accepted_and_drops_are_reported():
+    raw = json.dumps({"tasks": [
+        {"title": "Medication reminder", "category": "medication", "scheduled_time": "8:00 AM",
+         "frequency": "daily", "days_of_week": None, "review_notes": None, "estimated_duration_minutes": 15},
+        {"title": "Bad", "scheduled_time": "99:99"},
+    ]})
+    errs = []
+    tasks = ai.parse_extraction(raw, errs)
+    assert len(tasks) == 1 and tasks[0].scheduled_time == "08:00" and tasks[0].days_of_week == []
+    assert len(errs) == 1 and "Bad" in errs[0]

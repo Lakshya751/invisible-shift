@@ -68,11 +68,6 @@ export default function CareTeam() {
         description="Who can help, when, and with what. The scheduler only uses availability that has been explicitly declared, and only assigns tasks a caregiver is approved for."
         actions={
           <>
-            {data.workspace.is_demo && (
-              <Button variant="ghost" onClick={() => { if (confirm("Start a blank workspace? This clears the demo patient, plan and caregivers.")) run(api.blank(), "Blank workspace ready"); }}>
-                Start blank workspace
-              </Button>
-            )}
             <Button onClick={() => setEditing(blankCaregiver(cgs))}>
               <UserPlus /> Add caregiver
             </Button>

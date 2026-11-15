@@ -402,3 +402,81 @@ class ChatResponse(BaseModel):
     reply: str
     mode: str  # ai:<provider> | deterministic
     facts: List[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Accounts & patients
+# ---------------------------------------------------------------------------
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class SignupRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    email: str = Field(max_length=254)
+    password: str = Field(min_length=8, max_length=200)
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL_RE.match(v):
+            raise ValueError("Enter a valid email address")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Name is required")
+        return v
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=200)
+
+
+class PatientFields(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    age: Optional[int] = Field(default=None, ge=0, le=125)
+    situation: str = Field(default="", max_length=500)
+    discharge_date: Optional[str] = None
+    hospital: str = Field(default="", max_length=120)
+    plan_start_date: str
+
+    @field_validator("plan_start_date")
+    @classmethod
+    def _start(cls, v: str) -> str:
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", v or ""):
+            raise ValueError("plan_start_date must be YYYY-MM-DD")
+        return v
+
+    @field_validator("discharge_date")
+    @classmethod
+    def _dd(cls, v):
+        if v in (None, ""):
+            return None
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+            raise ValueError("discharge_date must be YYYY-MM-DD")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Patient name is required")
+        return v
+
+
+class PatientCreate(BaseModel):
+    template: Literal["blank", "demo"] = "blank"
+    patient: Optional[PatientFields] = None
+
+    @model_validator(mode="after")
+    def _need_fields(self):
+        if self.template == "blank" and self.patient is None:
+            raise ValueError("Patient details are required")
+        return self

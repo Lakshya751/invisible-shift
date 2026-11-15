@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -45,12 +46,30 @@ def provider_label() -> str:
     if p == "openai":
         return f"OpenAI · {os.getenv('OPENAI_MODEL', 'gpt-4o-mini')}"
     if p == "gemini":
-        return f"Gemini · {os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')}"
+        return f"Gemini · {os.getenv('GEMINI_MODEL', 'gemini-3.5-flash')}"
     return "Demo mode (no AI key)"
 
 
+RETRY_STATUSES = {403, 429, 500, 502, 503, 504}  # 403: newly enabled Google APIs flap while propagating
+MAX_ATTEMPTS = 3
+
+
+def _post_with_retry(url: str, headers: Dict[str, str], body: Dict[str, Any], timeout: float) -> httpx.Response:
+    last: Optional[httpx.Response] = None
+    for attempt in range(MAX_ATTEMPTS):
+        r = httpx.post(url, headers=headers, json=body, timeout=timeout)
+        if r.status_code not in RETRY_STATUSES:
+            return r
+        last = r
+        if attempt < MAX_ATTEMPTS - 1:
+            time.sleep(0.8 * (attempt + 1))
+    assert last is not None
+    return last
+
+
 def complete(system: str, user: str, json_mode: bool = False, timeout: float = 45.0) -> str:
-    """Single chat completion. Raises AIUnavailableError on any transport error."""
+    """Single chat completion with brief retries on transient errors.
+    Raises AIUnavailableError on failure (never includes credentials)."""
     p = provider()
     if p is None:
         raise AIUnavailableError("No AI provider configured")
@@ -64,32 +83,31 @@ def complete(system: str, user: str, json_mode: bool = False, timeout: float = 4
             if json_mode:
                 body["response_format"] = {"type": "json_object"}
             base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-            r = httpx.post(
-                f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}"},
-                json=body,
-                timeout=timeout,
-            )
+            r = _post_with_retry(f"{base}/chat/completions", {"Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}"}, body, timeout)
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"]
-        model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         gen_cfg: Dict[str, Any] = {"temperature": 0}
         if json_mode:
             gen_cfg["responseMimeType"] = "application/json"
-        r = httpx.post(
+        r = _post_with_retry(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            headers={"x-goog-api-key": os.getenv("GEMINI_API_KEY", "")},
-            json={
+            {"x-goog-api-key": os.getenv("GEMINI_API_KEY", "")},
+            {
                 "systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": user}]}],
                 "generationConfig": gen_cfg,
             },
-            timeout=timeout,
+            timeout,
         )
         r.raise_for_status()
-        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        parts = r.json()["candidates"][0]["content"]["parts"]
+        # Newer models may return a separate "thought" part; keep only answer text.
+        return "".join(pt.get("text", "") for pt in parts if not pt.get("thought"))
+    except httpx.HTTPStatusError as exc:
+        raise AIUnavailableError(f"{p} request failed (HTTP {exc.response.status_code})") from exc
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-        # Never echo credentials; just the class + status.
+        # Never echo credentials; just the class.
         raise AIUnavailableError(f"{p} request failed: {type(exc).__name__}") from exc
 
 
@@ -139,8 +157,33 @@ def _strip_fences(text: str) -> str:
     return m.group(1) if m else text
 
 
-def parse_extraction(raw: str) -> List[ExtractedTask]:
-    """Parse + validate LLM output. Raises AIOutputError with a precise message."""
+_AMPM = re.compile(r"^\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\s*$", re.I)
+
+
+def _coerce_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Tolerate common LLM formatting slips without inventing content."""
+    for key in ("days_of_week", "review_notes"):
+        if item.get(key) is None:
+            item[key] = []
+    for key in ("caregiver_required", "professional_required", "requires_transport", "requires_physical_assist", "needs_review"):
+        if item.get(key) is None:
+            item.pop(key, None)
+    t = item.get("scheduled_time")
+    if isinstance(t, str):
+        m = _AMPM.match(t)
+        if m:
+            h, mi = int(m.group(1)) % 12, int(m.group(2) or 0)
+            if m.group(3).lower() == "p":
+                h += 12
+            item["scheduled_time"] = f"{h:02d}:{mi:02d}"
+    if item.get("category") not in CATEGORIES:
+        item["category"] = "other"
+    return item
+
+
+def parse_extraction(raw: str, errors: Optional[List[str]] = None) -> List[ExtractedTask]:
+    """Parse + validate LLM output. Raises AIOutputError if nothing is usable.
+    Items that still fail validation are reported in `errors` (never dropped silently)."""
     try:
         data = json.loads(_strip_fences(raw))
     except json.JSONDecodeError as exc:
@@ -149,22 +192,23 @@ def parse_extraction(raw: str) -> List[ExtractedTask]:
     if not isinstance(items, list):
         raise AIOutputError("Expected an object with a 'tasks' array")
     out: List[ExtractedTask] = []
-    errors: List[str] = []
+    errs: List[str] = []
     for i, item in enumerate(items):
         if not isinstance(item, dict):
-            errors.append(f"tasks[{i}] is not an object")
+            errs.append(f"item {i + 1} is not an object")
             continue
-        item = dict(item)
-        item.setdefault("task_id", f"task_{i + 1:03d}")
+        item = _coerce_item(dict(item))
         item["task_id"] = f"task_{i + 1:03d}"  # enforce unique ids
-        if item.get("category") not in CATEGORIES:
-            item["category"] = "other"
         try:
             out.append(ExtractedTask(**item))
         except ValidationError as exc:
-            errors.append(f"tasks[{i}]: {exc.errors()[0]['msg']}")
-    if errors and not out:
-        raise AIOutputError("; ".join(errors[:5]))
+            first = exc.errors()[0]
+            field = ".".join(str(x) for x in first["loc"]) or "item"
+            errs.append(f"“{str(item.get('title') or 'untitled')[:60]}” ({field}: {first['msg']})")
+    if errors is not None:
+        errors.extend(errs)
+    if errs and not out:
+        raise AIOutputError("; ".join(errs[:5]))
     return out
 
 
@@ -220,7 +264,13 @@ def ai_extract(document_text: str, max_attempts: int = 2) -> Tuple[List[Extracte
             prompt += f"\n\nYour previous reply was rejected: {last_err}. Return valid JSON only, matching the schema."
         raw = complete(EXTRACTION_SYSTEM, prompt, json_mode=True)
         try:
-            tasks = parse_extraction(raw)
+            dropped: List[str] = []
+            tasks = parse_extraction(raw, dropped)
+            if dropped:
+                warnings.append(
+                    f"{len(dropped)} extracted instruction(s) could not be validated and were left out — "
+                    "add them manually if needed: " + "; ".join(dropped[:5])
+                )
             if attempt:
                 warnings.append(f"AI output needed {attempt + 1} attempts to validate.")
             return ground_tasks(tasks, document_text), warnings

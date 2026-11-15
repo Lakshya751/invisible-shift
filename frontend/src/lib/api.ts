@@ -6,6 +6,8 @@ import type {
   ExtractionResult,
   GapStatus,
   Health,
+  Me,
+  PatientFields,
   Report,
   ScenarioResult,
 } from "./types";
@@ -50,7 +52,18 @@ export const api = {
   health: () => req<Health>("/health"),
   state: () => req<AppStateData>("/state"),
   resetDemo: () => post<AppStateData>("/demo/reset"),
-  blank: () => post<AppStateData>("/workspace/blank"),
+  // auth
+  me: () => req<Me>("/auth/me"),
+  signup: (name: string, email: string, password: string) => post<Me>("/auth/signup", { name, email, password }),
+  login: (email: string, password: string) => post<Me>("/auth/login", { email, password }),
+  logout: () => post<{ ok: boolean }>("/auth/logout"),
+  launchDemo: () => post<Me>("/demo/launch"),
+  // patients
+  addPatient: (patient: PatientFields) => post<Me>("/patients", { template: "blank", patient }),
+  addDemoPatient: () => post<Me>("/patients", { template: "demo" }),
+  updatePatient: (id: string, patient: PatientFields) => put<Me>(`/patients/${id}`, patient),
+  deletePatient: (id: string) => req<Me>(`/patients/${id}`, { method: "DELETE" }),
+  selectPatient: (id: string) => post<Me>(`/patients/${id}/select`),
   sample: () => req<ExtractionResult>("/discharge/sample"),
   upload: (file: File) => {
     const fd = new FormData();

@@ -12,6 +12,40 @@ interface Msg {
   mode?: string;
 }
 
+
+/** Minimal, safe rendering of **bold** and bullet lines from AI replies (no HTML injection). */
+function inline(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith("**") && part.endsWith("**") ? <strong key={i}>{part.slice(2, -2)}</strong> : <span key={i}>{part}</span>,
+  );
+}
+
+function FormattedReply({ text }: { text: string }) {
+  const blocks: JSX.Element[] = [];
+  let bullets: string[] = [];
+  const flush = () => {
+    if (bullets.length) {
+      blocks.push(
+        <ul key={`ul${blocks.length}`} className="my-1.5 list-disc space-y-1 pl-4">
+          {bullets.map((b, i) => <li key={i}>{inline(b)}</li>)}
+        </ul>,
+      );
+      bullets = [];
+    }
+  };
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const m = line.match(/^(?:[*\-•]|\d+\.)\s+(.*)$/);
+    if (m) bullets.push(m[1]);
+    else {
+      flush();
+      if (line) blocks.push(<p key={`p${blocks.length}`} className="my-1 first:mt-0 last:mb-0">{inline(line.replace(/^#+\s*/, ""))}</p>);
+    }
+  }
+  flush();
+  return <>{blocks}</>;
+}
+
 const SUGGESTIONS = ["Why are tasks uncovered?", "What would help the most?", "Can we move the medication time?", "Who has the most work?", "What happens on Wednesday?"];
 
 export function CareNavigator() {
@@ -90,7 +124,7 @@ export function CareNavigator() {
                       m.role === "user" ? "rounded-br-md bg-navy-900 text-white" : "rounded-bl-md border border-slate-200 bg-white text-ink",
                     )}
                   >
-                    {m.content}
+                    {m.role === "assistant" ? <FormattedReply text={m.content} /> : m.content}
                     {m.mode && m.role === "assistant" && (
                       <div className="mt-1.5">
                         <Badge tone={m.mode.startsWith("ai") ? "teal" : "neutral"} className="text-[10px]">

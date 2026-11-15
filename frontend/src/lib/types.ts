@@ -260,3 +260,35 @@ export interface Report {
   clinician_questions: string[];
   disclaimer: string;
 }
+
+export interface User {
+  id: string;
+  name: string;
+  email: string | null;
+  is_guest: boolean;
+}
+
+export interface PatientSummary {
+  id: string;
+  patient: Patient;
+  is_demo: boolean;
+  plan_start: string;
+  instructions: number;
+  caregivers: number;
+  summary: CoverageSummary;
+}
+
+export interface Me {
+  user: User;
+  active_patient_id: string | null;
+  patients: PatientSummary[];
+}
+
+export interface PatientFields {
+  name: string;
+  age: number | null;
+  situation: string;
+  discharge_date: string | null;
+  hospital: string;
+  plan_start_date: string;
+}

@@ -81,15 +81,18 @@ function ProductPreview() {
 }
 
 export default function Landing() {
-  const { launchDemo } = useApp();
+  const { launchDemo, me } = useApp();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
 
   async function go() {
     setBusy(true);
-    await launchDemo();
-    navigate("/app/overview");
+    const ok = await launchDemo();
+    setBusy(false);
+    if (ok) navigate("/app/overview");
   }
+  const signedIn = !!me && !me.user.is_guest;
+  const uploadPath = me ? (me.active_patient_id ? "/app/discharge" : "/app/patients") : "/signin?mode=signup&next=/app/patients";
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -100,8 +103,8 @@ export default function Landing() {
           <header className="flex items-center justify-between py-5">
             <Logo light />
             <div className="flex items-center gap-2">
-              <Button variant="ghost" className="hidden text-navy-200 hover:bg-white/10 hover:text-white sm:inline-flex" onClick={() => navigate("/app/discharge")}>
-                Upload a care plan
+              <Button variant="ghost" className="text-navy-200 hover:bg-white/10 hover:text-white" onClick={() => navigate(signedIn ? "/app/patients" : "/signin")}>
+                {signedIn ? "My patients" : "Sign in"}
               </Button>
               <Button variant="accent" size="sm" onClick={go} disabled={busy}>
                 {busy ? <Loader2 className="animate-spin" /> : <Play />} Live demo
@@ -130,7 +133,7 @@ export default function Landing() {
                 <Button size="lg" variant="accent" onClick={go} disabled={busy} className="shadow-[0_8px_30px_-6px_rgba(20,184,166,0.6)]">
                   {busy ? <Loader2 className="animate-spin" /> : <Play />} Launch Live Demo
                 </Button>
-                <Button size="lg" variant="outline" className="border-white/20 bg-white/5 text-white hover:bg-white/10" onClick={() => navigate("/app/discharge")}>
+                <Button size="lg" variant="outline" className="border-white/20 bg-white/5 text-white hover:bg-white/10" onClick={() => navigate(uploadPath)}>
                   <Upload /> Upload a Care Plan
                 </Button>
               </motion.div>

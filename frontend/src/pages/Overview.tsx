@@ -50,7 +50,7 @@ function DayTooltip({ active, payload, label }: { active?: boolean; payload?: { 
 }
 
 export default function Overview() {
-  const { data, taskById, openTask, launchDemo, setTourStep } = useApp();
+  const { data, taskById, openTask, launchDemo, resetDemo, setTourStep } = useApp();
   const navigate = useNavigate();
 
   const byDay = useMemo(() => {
@@ -82,7 +82,7 @@ export default function Overview() {
           action={
             <div className="flex flex-wrap justify-center gap-2">
               <Button onClick={() => navigate("/app/discharge")}>Upload discharge plan</Button>
-              <Button variant="outline" onClick={launchDemo}>Load demo</Button>
+              <Button variant="outline" onClick={launchDemo}>Open demo patient</Button>
             </div>
           }
         />
@@ -109,7 +109,7 @@ export default function Overview() {
   }
 
   async function startTour() {
-    if (ws.is_demo) await launchDemo();
+    if (ws.is_demo) await resetDemo();
     setTourStep(0);
   }
 
